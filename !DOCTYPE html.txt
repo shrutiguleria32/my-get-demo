@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+{% load static %}
+<html>
+<head>
+	<title>Ecom</title>
+
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1" />
+
+	<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+
+	<link rel="stylesheet" type="text/css" href="{% static 'css/main.css' %}">
+
+	<!-- Sundar colors aur proper alignment ke liye chota sa CSS -->
+	<style>
+		.navbar {
+			background: linear-gradient(135deg, #1f4037, #99f2c8) !important;
+			box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+		}
+		.navbar-brand {
+			font-weight: 800;
+			font-size: 24px;
+			color: #fff !important;
+			text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+		}
+		.nav-link {
+			color: #fff !important;
+			font-weight: 600;
+			transition: 0.3s;
+		}
+		.nav-link:hover {
+			color: #ffeb3b !important;
+		}
+		.btn-warning {
+			background-color: #ffc107;
+			border: none;
+			font-weight: bold;
+			box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+		}
+		.btn-warning:hover {
+			background-color: #e0a800;
+		}
+		#cart-total {
+			background-color: #ff4757;
+			padding: 2px 8px;
+			border-radius: 50%;
+			font-size: 14px;
+			font-weight: bold;
+		}
+	</style>
+</head>
+<body>
+
+	<nav class="navbar navbar-expand-lg navbar-dark px-4">
+	  <a class="navbar-brand" href="{% url 'index'%}">☑️E-COM</a>
+	  <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+	    <span class="navbar-toggler-icon"></span>
+	  </button>
+
+	  <div class="collapse navbar-collapse" id="navbarSupportedContent">
+	    <ul class="navbar-nav mr-auto">
+	      <li class="nav-item active">
+	        <a class="nav-link" href="{% url 'cart'%}">Store <span class="sr-only">(current)</span></a>
+	      </li>
+	    </ul>
+	    <div class="form-inline my-2 my-lg-0" style="gap: 15px;">
+        {% if user.is_authenticated %}
+	     	<a href="/myauth/logout" class="btn btn-warning">Logout</a>
+			{% else %}
+			<a href="/myauth/login" class="btn btn-warning">Login</a>
+			{% endif %}
+			<a href="{% url 'cart' %}" class="d-flex align-items-center text-decoration-none">
+        <img id="cart-icon" src="{% static 'cart.png' %}" height="30px" width="30px"/>
+         </a>
+        <p id="cart-total" class="text-white mb-0 ml-1">{{order.gettotqty}}</p>
+      </div>
+	  </div>
+	</nav>
+
+    <div class="container">
+        <br>
+        {% block content %}
+        {% endblock content %}
+    </div>
+
+	<script src="https://code.jquery.com/jquery-3.4.1.slim.min.js" integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n" crossorigin="anonymous"></script>
+
+	<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js" integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo" crossorigin="anonymous"></script>
+
+	<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js" integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6" crossorigin="anonymous"></script>
+</body>
+</html>
+
+
+
+
+
+VIEW
+from django.shortcuts import render, redirect,HttpResponse
+from.models import Product,Order,OrderItem,ShippingAddress,Customer
+from .forms import UserForm, CustomerForm
+from django.contrib.auth import login
+from django.conf import settings
+from django.http.response import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+import stripe
+
+
+from django.shortcuts import render, get_object_or_404
+from .models import Product
+
+from django.contrib.auth import logout
+from django.shortcuts import redirect
+
+def user_logout(request):
+    logout(request)
+    return render(request, 'store/logout.html')
+
+
+
+def product_detail(request, pk):
+    product = get_object_or_404(Product, id=pk)
+    context = {'product': product}
+    return render(request, 'store/product_detail.html', context)
+# Create your views here.
+def home(request):
+    prds=Product.objects.all().order_by("-date_added")
+    if request.user.is_authenticated:
+        customer=request.user.customer
+        order,created=Order.objects.get_or_create(customer=customer,complete=False)
+    else:
+        order={"gettotqty":0}
+    return render(request, "store/home.html",{"prds":prds,"order":order})
+
+
+@csrf_exempt
+def stripe_config(request):
+    if request.method == 'GET':
+        stripe_config = {'publicKey': settings.STRIPE_PUBLISHABLE_KEY}
+    return JsonResponse(stripe_config, safe=False)
+
+
+@csrf_exempt
+def create_checkout_session(request):
+    if request.method == 'GET':
+        lst=[]
+        order, created = Order.objects.get_or_create(customer=request.user.customer,complete=False)
+        orderitems = order.orderitem_set.all()
+        for itm in orderitems:
+                lst.append({
+                    'price_data': {
+                        'currency': 'usd',
+                        'product_data': {
+                            'name': itm.product.title,
+                        },
+                        'unit_amount': int(float(itm.product.price) * 100),  # Amount in cents ($400 ke liye * 100 zaroori hai)
+                    },
+                    'quantity': itm.quantity,
+                }, )
+        print(lst)
+        domain_url = 'http://127.0.0.1:8000/'
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+        try:
+            checkout_session = stripe.checkout.Session.create(
+                success_url=domain_url + 'success?session_id={CHECKOUT_SESSION_ID}',
+                cancel_url=domain_url + 'cancelled/',
+                # payment_method_types=['card'],  <-- Yeh line hata di gayi hai
+                mode='payment',
+                line_items=lst,
+                metadata={
+                    'cust': request.user.customer.id,
+                    'adr': request.GET.get("query")
+                }
+            )
+            return JsonResponse({'sessionId': checkout_session['id']})
+        except Exception as e:
+            return JsonResponse({'error': str(e)})
+
+def register(request):
+    if request.method=="POST":
+        user_form=UserForm(request.POST)
+        cust_form=CustomerForm(request.POST)
+        if user_form.is_valid() and cust_form.is_valid():
+            user=user_form.save()
+            cust=cust_form.save(commit=False)
+            cust.user=user
+            cust.save()
+            login(request, user)
+        return redirect("index")
+    else:
+        frm=UserForm()
+        cstfrm=CustomerForm()
+        return render(request,"registration/register.html",
+                      {"usrfrm":frm,"cstfrm":cstfrm})
+
+def updatecart(request):
+    if request.user.is_authenticated:
+        if request.method=="POST":
+            if request.POST.get("btnupd"):
+                pids = [(int)(ctrl[3:]) for ctrl in request.POST if 'txt' in ctrl]
+                customer = request.user.customer
+                order, created = Order.objects.get_or_create(customer=customer, complete=False)
+                prd = Product.objects.get(id=pids[0])
+                orditm, crt = OrderItem.objects.get_or_create(order=order, product=prd)
+                qty=(int)(request.POST.get("txt"+str(pids[0])))
+                if qty<=0:
+                    orditm.delete()
+                else:
+                    orditm.quantity=qty
+                    orditm.save()
+
+            elif request.POST.get("btndel"):
+                pids=[(int)(ctrl[3:]) for ctrl in request.POST if 'txt' in ctrl]
+                customer = request.user.customer
+                order, created = Order.objects.get_or_create(customer=customer, complete=False)
+                prd = Product.objects.get(id=pids[0])
+                orditm,crt=OrderItem.objects.get_or_create(order=order,product=prd)
+                orditm.delete()
+            else:
+                pids=[(int)(ctrl[3:]) for ctrl in request.POST if 'btn' in ctrl]
+                customer=request.user.customer
+                order,created=Order.objects.get_or_create(customer=customer,complete=False)
+                prd=Product.objects.get(id=pids[0])
+                orderitem,created=OrderItem.objects.get_or_create(order=order,product=prd)
+                orderitem.quantity+=1
+                orderitem.save()
+        return redirect("cart")
+    else:
+        return redirect("login")
+
+def showcart(request):
+    if request.user.is_authenticated:
+        order, created = Order.objects.get_or_create(customer=request.user.customer, complete=False)
+        orderitems = order.orderitem_set.all()
+        return render(request, "store/cart.html", {"order": order, "orditms": orderitems})
+    else:
+        return redirect("login")
+
+def checkout(request):
+    if request.user.is_authenticated:
+        order, created = Order.objects.get_or_create(customer=request.user.customer, complete=False)
+        orderitems = order.orderitem_set.all()
+        return render(request, "store/checkout.html", {"order": order, "orditms": orderitems})
+    else:
+        return redirect("login")
+
+def successview(request):
+    return render(request,"store/success.html")
+
+def cancelview(request):
+    return render(request, "store/cancel.html")
+
+
+@csrf_exempt
+def stripe_webhook(request):
+    stripe.api_key = settings.STRIPE_SECRET_KEY
+    endpoint_secret = settings.STRIPE_ENDPOINT_SECRET
+    payload = request.body
+    sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
+    event = None
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, endpoint_secret
+        )
+    except ValueError as e:
+        return HttpResponse(status=400)
+    except stripe.error.SignatureVerificationError as e:
+        return HttpResponse(status=400)
+
+    # Handle the checkout.session.completed event
+    if event['type'] == 'checkout.session.completed':
+        print("Payment was successful.")
+
+        # YAHAN BADLAAV HAI: Session ko dictionary mein convert kiya gaya hai
+        session = event["data"]["object"].to_dict()
+
+        metadata = session.get("metadata", {})
+
+        cust_id = metadata.get("cust")
+        addr_string = metadata.get("adr")
+
+        print(f"DEBUG DATA -> Customer ID: {cust_id}, Address: {addr_string}")
+
+        if cust_id and addr_string:
+            try:
+                # 1. Pehle Customer object retrieve karein
+                customer_obj = Customer.objects.get(id=cust_id)
+
+                # 2. Sahi customer instance ke sath order get/create karein
+                ord, created = Order.objects.get_or_create(customer=customer_obj, complete=False)
+                ord.transaction_id = session.get("payment_intent")
+                ord.complete = True
+                ord.save()
+
+                # 3. Address split karke ShippingAddress create karein
+                adr, cty, sta, zipcode = addr_string.split("|")
+
+                ShippingAddress.objects.create(
+                    customer=customer_obj,
+                    order=ord,
+                    address=adr,
+                    city=cty,
+                    state=sta,
+                    zipcode=zipcode
+                )
+                print("Shipping address saved successfully!")
+
+            except Customer.DoesNotExist:
+                print("Error: Customer not found in database.")
+            except Exception as e:
+                print(f"Error saving order/address: {e}")
+        else:
+            # Agar metadata se data nahi mila toh yahan print ho jayega
+            print(f"WARNING: Metadata missing! cust_id: {cust_id}, addr_string: {addr_string}")
+
+    return HttpResponse(status=200)
